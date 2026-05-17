@@ -15,13 +15,13 @@ object BalanceManager {
     }
 
     fun getBalance(): Int {
-        return prefs.getInt(KEY_BALANCE, DEFAULT_BALANCE.toInt()).toInt()
+        return prefs.getInt(KEY_BALANCE, DEFAULT_BALANCE)
     }
 
     fun deduct(amount: Int): Boolean {
         val current = getBalance()
         if (current >= amount) {
-            prefs.edit().putInt(KEY_BALANCE, (current - amount).toInt()).apply()
+            prefs.edit().putInt(KEY_BALANCE, (current - amount)).apply()
             return true
         }
         return false

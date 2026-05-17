@@ -10,6 +10,8 @@ import com.loyalt.loyaltclient.adapter.PartnerAdapter
 import com.loyalt.loyaltclient.databinding.ActivityMainBinding
 import com.loyalt.loyaltclient.databinding.BottomSheetPaymentBinding
 import com.loyalt.loyaltclient.dto.PartnerResponse
+import com.loyalt.loyaltclient.dto.PaymentRequest
+import com.loyalt.loyaltclient.dto.TransactionRequest
 import com.loyalt.loyaltclient.managers.BalanceManager
 import com.loyalt.loyaltclient.managers.LoyaltyManager
 import com.loyalt.loyaltclient.models.LoyaltyType
@@ -118,30 +120,56 @@ class MainActivity : AppCompatActivity() {
 
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    val updatedPartner = when (partner.loyaltyType) {
-                        LoyaltyType.STAMP_CARD -> {
-                            val newStamps = partner.currentValueLoyalty + 1
-                            val maxStamps = partner.maxValueOrPercent
+                    // 1. Вычисляем новые значения лояльности
+                    var newLoyaltyValue = partner.currentValueLoyalty
 
-                            if (newStamps >= maxStamps) {
-                                LoyaltyManager.saveStamps(partner.partnerId, 0)
-                                partner.copy(currentValueLoyalty = 0)
-                            } else {
-                                LoyaltyManager.saveStamps(partner.partnerId, newStamps)
-                                partner.copy(currentValueLoyalty = newStamps)
+                    when (partner.loyaltyType) {
+                        LoyaltyType.STAMP_CARD -> {
+                            newLoyaltyValue += 1
+                            if (newLoyaltyValue >= partner.maxValueOrPercent) {
+                                newLoyaltyValue = 0
                             }
                         }
                         LoyaltyType.CASHBACK -> {
                             val cashbackPercent = partner.maxValueOrPercent
                             val cashbackAmount = (COST * cashbackPercent) / 100
-                            val newCashback = partner.currentValueLoyalty + cashbackAmount
-
-                            android.util.Log.d("MainActivity", "Кэшбек: $cashbackPercent%, сумма: $cashbackAmount, было: ${partner.currentValueLoyalty}, стало: $newCashback")
-
-                            LoyaltyManager.saveCashback(partner.partnerId, newCashback)
-                            partner.copy(currentValueLoyalty = newCashback)
+                            newLoyaltyValue += cashbackAmount
                         }
                     }
+
+                    val updateRequest =
+                        PaymentRequest(
+                            clientId = if (partner.clientId == 0) 1 else partner.clientId,
+                            partnerId = partner.partnerId,
+                            balance = BalanceManager.getBalance(),
+                            loyaltyType = partner.loyaltyType.name,
+                            currValue = newLoyaltyValue,
+                            maxValueOrPercent = partner.maxValueOrPercent
+                    )
+
+                    RetrofitClient.api.processPayment(updateRequest)
+
+                    val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.getDefault())
+                    val currentDate = sdf.format(java.util.Date())
+
+                    val transactionRequest = TransactionRequest(
+                        transactionId = (System.currentTimeMillis() % Int.MAX_VALUE).toInt(),
+                        partnerId = partner.partnerId,
+                        clientId = if (partner.clientId == 0) 1 else partner.clientId,
+                        amount = COST,
+                        date = currentDate
+                    )
+
+                    android.util.Log.d("MainActivity", "Отправка транзакции: $transactionRequest")
+                    RetrofitClient.api.sendTransaction(transactionRequest)
+
+                    if (partner.loyaltyType == LoyaltyType.STAMP_CARD) {
+                        LoyaltyManager.saveStamps(partner.partnerId, newLoyaltyValue)
+                    } else {
+                        LoyaltyManager.saveCashback(partner.partnerId, newLoyaltyValue)
+                    }
+
+                    val updatedPartner = partner.copy(currentValueLoyalty = newLoyaltyValue)
 
                     withContext(Dispatchers.Main) {
                         val index = partnersList.indexOfFirst { it.partnerId == partner.partnerId }
@@ -166,19 +194,16 @@ class MainActivity : AppCompatActivity() {
                         }
                         Toast.makeText(this@MainActivity, message, Toast.LENGTH_SHORT).show()
                     }
+
                 } catch (e: Exception) {
                     BalanceManager.add(COST)
-                    android.util.Log.e("MainActivity", "Ошибка оплаты", e)
+                    android.util.Log.e("MainActivity", "Ошибка оплаты на бэкенде", e)
 
                     withContext(Dispatchers.Main) {
                         bsBinding.btnPay.isEnabled = true
                         bsBinding.btnPay.text = "Оплатить"
                         updateBalanceDisplay()
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Ошибка: ${e.message}",
-                            Toast.LENGTH_LONG
-                        ).show()
+                        Toast.makeText(this@MainActivity, "Ошибка сервера: ${e.message}", Toast.LENGTH_LONG).show()
                     }
                 }
             }

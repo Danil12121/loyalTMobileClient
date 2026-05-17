@@ -1,7 +1,7 @@
 package com.loyalt.loyaltclient.models
 
 data class Partner(
-    val clientId: Long,
+    val clientId: Int,
     val partnerId: String,
     var balance: Int,
     val loyaltyType: LoyaltyType,
